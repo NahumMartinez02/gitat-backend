@@ -1,77 +1,96 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const AuthRepository = require('../../repository/authRepository');
+import jwt from "jsonwebtoken";
+import bcrypt from 'bcryptjs';
+// import { transporter } from "../../config/mailMan.js"; // Descomenta cuando tengas el mailMan
+import authRepository from "../../repository/authRepository.js";
 
-exports.register = async (req, res) => {
+// Función Register
+const register = async (req, res) => {
+    const { nombre, email, tel, password } = req.body;
+    
+    if (!nombre || !email || !password) {
+        return res.status(400).json({ message: 'Todos los campos son requeridos' });
+    }
+
     try {
-        const { nombre, email, password, telefono, direccion } = req.body;
+        // Verificar duplicados antes de insertar
+        const existing = await authRepository.getUserByEmail(email);
+        if(existing) return res.status(400).json({ message: 'El correo ya existe' });
 
-        // 1. Validar campos
-        if (!nombre || !email || !password) {
-            return res.status(400).json({ msg: 'Faltan datos obligatorios' });
-        }
-
-        // 2. Verificar si ya existe
-        const existingUser = await AuthRepository.findByEmail(email);
-        if (existingUser) {
-            return res.status(400).json({ msg: 'El correo ya está registrado' });
-        }
-
-        // 3. Encriptar contraseña
+        // Encriptar con BCRYPT (Mejor que SHA256)
         const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password, salt);
+        const hashedPassword = await bcrypt.hash(password, salt);
 
-        // 4. Guardar en BD
-        const userId = await AuthRepository.createUser({
-            nombre, email, passwordHash, telefono, direccion
+        // Crear usuario
+        const user = await authRepository.createUser({ 
+            nombre, email, password: hashedPassword, tel 
         });
 
-        res.status(201).json({ msg: 'Usuario registrado exitosamente', userId });
+        /* AQUÍ IRÍA EL ENVÍO DE CORREO (Comentado para evitar errores por ahora)
+        await transporter.sendMail({...});
+        */
+
+        const payload = {
+            id: user.ID,
+            nombre: user.NOMBRE,
+            rol: user.ROL
+        };
+
+        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+        return res
+            .cookie('access_token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 3600000
+            })
+            .status(201)
+            .json({ message: "Registro exitoso", userId: user.ID });
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ msg: 'Error en el servidor al registrar' });
+        return res.status(500).json({ message: 'Error interno del servidor', error: error.message });
     }
 };
 
-exports.login = async (req, res) => {
+// Función Login
+const login = async (req, res) => {
+    const { email, password } = req.body;
+    
+    if(!email || !password){
+        return res.status(400).json({ message: 'Datos incompletos' });
+    }
+
     try {
-        const { email, password } = req.body;
-
-        // 1. Buscar usuario
-        const user = await AuthRepository.findByEmail(email);
-        if (!user) {
-            return res.status(400).json({ msg: 'Credenciales inválidas' });
+        const user = await authRepository.getUserByEmail(email);
+        
+        // Validar usuario y contraseña (usando bcrypt.compare)
+        if(!user || !(await bcrypt.compare(password, user.contrasena))) {
+            return res.status(401).json({ message: 'Credenciales inválidas' });
         }
 
-        // 2. Comparar contraseñas
-        const isMatch = await bcrypt.compare(password, user.contrasena);
-        if (!isMatch) {
-            return res.status(400).json({ msg: 'Credenciales inválidas' });
-        }
-
-        // 3. Generar JWT
         const payload = {
-            id: user.id,
+            id: user.id, // Ojo: minúscula porque viene directo de BD
+            nombre: user.nombre,
             rol: user.rol,
-            nombre: user.nombre
+            photo_url: user.photo_url
         };
 
         const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '8h' });
 
-        res.json({
-            msg: 'Login exitoso',
-            token,
-            user: {
-                id: user.id,
-                nombre: user.nombre,
-                email: user.email,
-                rol: user.rol
-            }
-        });
+        return res
+        .cookie('access_token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 8 * 3600000
+        })
+        .json({ message: "Login exitoso", token, user: payload });
 
-    } catch (error) {
+    } catch(error){
         console.error(error);
-        res.status(500).json({ msg: 'Error en el servidor al loguear' });
+        return res.status(500).json({ message: 'Error en el servidor' });
     }
 };
+
+export default { register, login };

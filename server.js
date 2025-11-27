@@ -1,59 +1,67 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-require('dotenv').config();
+import express from "express";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import dotenv from "dotenv";
+import db from "./config/database.js";
 
-// Importar la configuración de la base de datos (la crearemos en el siguiente paso si no la tienes)
-const pool = require('./config/database');
+// Rutas (Descomenta conforme vayamos creando los archivos)
+import authRoutes from "./Features/Auth/authRoutes.js";
+// import authorizationRoutes from "./Features/Authorization/authorizationRoutes.js";
+// import adminRoutes from "./Features/Admin/adminRoutes.js";
+// import inventoryRoutes from './Features/Inventory/inventoryRoutes.js';
+// import reservationRoutes from './Features/Reservations/reservationRoutes.js';
 
-// Inicializar la aplicación de Express
+dotenv.config();
+
+const PORT = process.env.PORT || 3000;
 const app = express();
 
-// --- 1. Middlewares (Configuración de Seguridad y Utilidades) ---
-app.use(helmet());                          // Protege cabeceras HTTP
-app.use(cors());                            // Permite conexiones desde otros dominios (tu frontend)
-app.use(morgan('dev'));                     // Muestra logs de las peticiones en la consola
-app.use(express.json());                    // Permite recibir datos en formato JSON
-app.use(express.urlencoded({ extended: true })); // Permite recibir datos de formularios
+app.use(express.json()); 
+app.use(cookieParser());
 
-// --- 2. Ruta de Prueba (Health Check) ---
-// Esta ruta sirve para ver si el servidor responde y si la BD está conectada
-app.get('/api/health', async (req, res) => {
-    try {
-        // Consulta simple para verificar conexión a MySQL
-        const [rows] = await pool.query('SELECT 1 + 1 AS result');
-        res.json({ 
-            estado: 'OK', 
-            mensaje: 'Servidor Backend Gitat funcionando al 100%', 
-            base_datos: rows[0].result === 2 ? 'Conectada 🟢' : 'Error 🔴' 
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ 
-            estado: 'Error', 
-            mensaje: 'No hay conexión con la base de datos',
-            detalle: error.message 
-        });
-    }
+// Configuración CORS (Ajustada para producción y local)
+app.use(
+  cors({
+    origin: [
+        "http://localhost:3000", 
+        "http://localhost:5173", 
+        "http://gitat.grupolosifra.com" // Tu dominio real
+    ],
+    credentials: true,
+  })
+);
+
+// Verificación de Base de Datos
+async function testDbConnection() {
+  try {
+    await db.query("SELECT 1");
+    console.log("✅ Conexión a la base de datos establecida correctamente.");
+  } catch (error) {
+    console.error("❌ No se pudo conectar a la base de datos:", error.message);
+    // No matamos el proceso, para que al menos el servidor responda errores HTTP
+  }
+}
+
+// Endpoint de Salud (Health Check)
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'OK', msg: 'Backend GITAT Activo 🚀' });
 });
 
-// --- 3. Rutas de la API (Aquí iremos agregando tus Features) ---
-// Por ahora están comentadas hasta que creemos los archivos de rutas
-// app.use('/api/auth', require('./Features/Auth/authRoutes'));
-// app.use('/api/users', require('./Features/Admin/adminRoutes'));
+async function startServer() {
+  await testDbConnection(); 
 
+  app.listen(PORT, () => {
+    console.log(`✅ Servidor corriendo en puerto ${PORT}`);
+  });
 
-// --- 4. Manejo de Errores Global ---
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send('¡Algo salió mal en el servidor!');
-});
+  // Rutas
+  app.use("/api/auth", authRoutes); 
+  
+  // Descomentar cuando tengamos los archivos listos:
+  // app.use("/api/verification", authorizationRoutes);
+  // app.use("/api/admin", adminRoutes);
+  // app.use("/api/inventory", inventoryRoutes);
+  // app.use('/api/reservation', reservationRoutes);
+}
 
-// --- 5. Arrancar el Servidor ---
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`------------------------------------------------`);
-    console.log(`🚀 Servidor corriendo en: http://localhost:${PORT}`);
-    console.log(`------------------------------------------------`);
-});
+startServer();
